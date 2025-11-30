@@ -367,7 +367,7 @@ class PlayState extends MusicBeatSubState
   public var disableKeys:Bool = false;
 
   /**
-   * The previous difficulty the player was playing on.
+   * The previous difficulty the player was playing on.S
    */
   public var previousDifficulty:String = Constants.DEFAULT_DIFFICULTY;
 

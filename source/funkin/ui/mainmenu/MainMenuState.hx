@@ -221,6 +221,10 @@ class MainMenuState extends MusicBeatState
       startExitState(() -> new funkin.ui.credits.CreditsState());
     });
 
+    createMenuItem('online', 'mainmenu/online', function() {
+      startExitState(() -> new funkin.ui.credits.CreditsState());
+    });
+
     // Reset position of menu items.
     final spacing:Float = 160;
     final top:Float = (FlxG.height - (spacing * (menuItems.length - 1))) / 2;

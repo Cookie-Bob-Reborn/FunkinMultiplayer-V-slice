@@ -42,18 +42,18 @@ class Project extends HXProject
   /**
    * The game's name. Used as the default window title.
    */
-  static final TITLE:String = "Friday Night Funkin'";
+  static final TITLE:String = "Friday Night Funkin': Multiplayer";
 
   /**
    * A package name used for identifying the app on various app stores.
    */
-  static final PACKAGE_NAME:String = "me.funkin.fnf";
+  static final PACKAGE_NAME:String = "me.funkin.funkinmultiplayer";
 
   /**
    * The name of the generated executable file.
    * For example, `"Funkin"` will create a file called `Funkin.exe`.
    */
-  static final EXECUTABLE_NAME:String = "Funkin";
+  static final EXECUTABLE_NAME:String = "FunkinMultiplayer";
 
   /**
    * The relative location of the source code.
@@ -471,6 +471,12 @@ class Project extends HXProject
    */
   static final FEATURE_VIDEO_PLAYBACK:FeatureFlag = "FEATURE_VIDEO_PLAYBACK";
 
+  /**
+   * `-DLOCAL_MODE_FEATURE`
+   * If this flag is enabled, the game
+   */
+  static final LOCAL_MODE_FEATURE:FeatureFlag = "LOCAL_MODE_FEATURE";
+
   //
   // CONFIGURATION FUNCTIONS
   //
@@ -768,7 +774,7 @@ class Project extends HXProject
     //
 
     // Should be false unless explicitly requested.
-    GITHUB_BUILD.apply(this, false);
+    GITHUB_BUILD.apply(this, true);
     EXCLUDE_ARMV7.apply(this, false);
 
     // Should be true unless explicitly requested.
@@ -812,6 +818,9 @@ class Project extends HXProject
     // Should be true on desktop, non-tester builds.
     // We don't want testers to accidentally leak songs to their Discord friends!
     FEATURE_DISCORD_RPC.apply(this, isDesktop() && !FEATURE_DEBUG_FUNCTIONS.isEnabled(this));
+
+    // Multiplayer local mode feature.
+    LOCAL_MODE_FEATURE.apply(this, true);
 
     // Newgrounds features
     FEATURE_NEWGROUNDS.apply(this, !isMobile());
