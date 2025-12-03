@@ -1,0 +1,8 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TextureAtlas imagePath="loseBeta.png">
+	<!-- Created with Adobe Animate version 21.0.9.42677 -->
+	<!-- http://www.adobe.com/products/animate.html -->
+	<SubTexture name="LoseIdle0000" x="0" y="0" width="376" height="120"/>
+	<SubTexture name="LoseIdle0001" x="0" y="120" width="375" height="120" frameX="0" frameY="0" frameWidth="376" frameHeight="120"/>
+	<SubTexture name="LoseIdle0002" x="0" y="240" width="375" height="120" frameX="0" frameY="0" frameWidth="376" frameHeight="120"/>
+</TextureAtlas>

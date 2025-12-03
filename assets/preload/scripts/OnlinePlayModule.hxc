@@ -1,0 +1,606 @@
+import funkin.modding.module.Module;
+import funkin.modding.events.*;
+import funkin.play.PlayState;
+import funkin.play.notes.Note;
+import funkin.play.notes.Strumline;
+import funkin.play.character.BaseCharacter;
+import flixel.FlxG;
+import flixel.text.FlxText;
+import flixel.util.FlxColor;
+import flixel.util.FlxTimer;
+
+/**
+ * Módulo de Multiplayer Online
+ * Gerencia toda a lógica de networking e sincronização entre dois jogadores
+ */
+class OnlinePlayModule extends Module
+{
+    // ===== VARIÁVEIS DO SISTEMA ONLINE =====
+    var onlineManager:Dynamic = null; // Seu sistema de networking
+    var isPlayer1:Bool = true;
+    var isConnected:Bool = false;
+    var inOnlineMatch:Bool = false;
+
+    // ===== DADOS DO OPONENTE =====
+    var opponentScore:Int = 0;
+    var opponentHealth:Float = 1.0;
+    var opponentCombo:Int = 0;
+    var opponentMisses:Int = 0;
+    var opponentDied:Bool = false;
+
+    // ===== DADOS LOCAIS =====
+    var myDied:Bool = false;
+
+    // ===== TIMER DE SINCRONIZAÇÃO =====
+    var syncTimer:Float = 0.0;
+    var SYNC_INTERVAL:Float = 0.15; // 150ms
+
+    // ===== UI ELEMENTS =====
+    var uiElements:Array<FlxText> = [];
+    var opponentScoreText:FlxText = null;
+    var opponentHealthText:FlxText = null;
+    var connectionText:FlxText = null;
+    var pingText:FlxText = null;
+
+    // ===== STRUMLINES =====
+    var myStrumline:Strumline = null;
+    var theirStrumline:Strumline = null;
+
+    /**
+     * Construtor do módulo
+     */
+    public function new()
+    {
+        super("OnlinePlayModule");
+        trace("[OnlinePlayModule] Módulo criado!");
+    }
+
+    // ==========================================
+    // CALLBACKS DO MÓDULO
+    // ==========================================
+
+    /**
+     * Chamado quando o módulo é criado
+     */
+    public override function onCreate(event:ScriptEvent):Void
+    {
+        super.onCreate(event);
+
+        trace("[OnlinePlayModule] onCreate() - Inicializando sistema online...");
+
+        // Inicializar seu sistema de networking aqui
+        // onlineManager = new OnlineManager();
+        // isConnected = onlineManager.connect();
+        // isPlayer1 = onlineManager.isPlayer1;
+
+        // SIMULAÇÃO (remova isso quando tiver networking real)
+        isConnected = true;
+        isPlayer1 = true;
+    }
+
+    /**
+     * Chamado quando uma música começa
+     */
+    public override function onSongStart(event:ScriptEvent):Void
+    {
+        super.onSongStart(event);
+
+        if (!isConnected) return;
+
+        trace("[OnlinePlayModule] onSongStart() - Música iniciada em modo online!");
+
+        inOnlineMatch = true;
+        resetMatchData();
+        setupStrumlines();
+        createOnlineUI();
+        setupNetworkCallbacks();
+    }
+
+    /**
+     * Chamado todo frame durante gameplay
+     */
+    public override function onUpdate(event:UpdateScriptEvent):Void
+    {
+        super.onUpdate(event);
+
+        if (!inOnlineMatch || !isConnected) return;
+
+        var elapsed:Float = event.elapsed;
+
+        // Sincronização periódica
+        syncTimer += elapsed;
+        if (syncTimer >= SYNC_INTERVAL)
+        {
+            syncTimer = 0;
+            sendSyncData();
+        }
+
+        // Capturar inputs
+        captureInputs();
+
+        // Verificar morte
+        checkDeath();
+
+        // Atualizar UI
+        updateUI();
+    }
+
+    /**
+     * Chamado quando o jogador acerta uma nota
+     */
+    public override function onNoteHit(event:HitNoteScriptEvent):Void
+    {
+        super.onNoteHit(event);
+
+        if (!inOnlineMatch || !isConnected) return;
+
+        var note:Note = event.note;
+        var judgement:String = event.judgement; // "sick", "good", "bad", "shit"
+
+        sendNoteHit({
+            direction: note.direction,
+            judgement: judgement,
+            score: PlayState.instance.songScore,
+            combo: PlayState.instance.combo,
+            health: PlayState.instance.health,
+            time: Conductor.instance.songPosition
+        });
+    }
+
+    /**
+     * Chamado quando o jogador erra uma nota
+     */
+    public override function onNoteMiss(event:NoteScriptEvent):Void
+    {
+        super.onNoteMiss(event);
+
+        if (!inOnlineMatch || !isConnected) return;
+
+        var note:Note = event.note;
+
+        sendNoteMiss({
+            direction: note.direction,
+            health: PlayState.instance.health,
+            time: Conductor.instance.songPosition
+        });
+    }
+
+    /**
+     * Chamado quando a música termina
+     */
+    public override function onSongEnd(event:ScriptEvent):Void
+    {
+        super.onSongEnd(event);
+
+        if (!inOnlineMatch || !isConnected) return;
+
+        trace("[OnlinePlayModule] onSongEnd() - Música finalizada!");
+
+        // Determinar vencedor
+        var myScore:Int = PlayState.instance.songScore;
+        var didIWin:Bool = myScore > opponentScore && !myDied;
+
+        sendGameResult({
+            score: myScore,
+            won: didIWin,
+            combo: PlayState.instance.combo,
+            misses: PlayState.instance.songMisses
+        });
+
+        showResultScreen(didIWin);
+
+        inOnlineMatch = false;
+    }
+
+    /**
+     * Chamado quando o módulo é destruído
+     */
+    public override function onDestroy(event:ScriptEvent):Void
+    {
+        super.onDestroy(event);
+
+        trace("[OnlinePlayModule] onDestroy() - Limpando recursos...");
+
+        // Limpar UI
+        for (element in uiElements)
+        {
+            if (element != null)
+            {
+                element.destroy();
+            }
+        }
+        uiElements = [];
+
+        // Desconectar networking
+        if (onlineManager != null)
+        {
+            // onlineManager.disconnect();
+            // onlineManager.clearCallbacks();
+        }
+
+        inOnlineMatch = false;
+    }
+
+    // ==========================================
+    // CONFIGURAÇÃO INICIAL
+    // ==========================================
+
+    /**
+     * Resetar dados da partida
+     */
+    function resetMatchData():Void
+    {
+        opponentScore = 0;
+        opponentHealth = 1.0;
+        opponentCombo = 0;
+        opponentMisses = 0;
+        opponentDied = false;
+        myDied = false;
+        syncTimer = 0.0;
+    }
+
+    /**
+     * Configurar referências das strumlines
+     */
+    function setupStrumlines():Void
+    {
+        var playState = PlayState.instance;
+
+        if (isPlayer1)
+        {
+            myStrumline = playState.playerStrumline;
+            theirStrumline = playState.opponentStrumline;
+        }
+        else
+        {
+            myStrumline = playState.opponentStrumline;
+            theirStrumline = playState.playerStrumline;
+
+            // Inverter controles
+            playState.opponentStrumline.playerControls = true;
+            playState.playerStrumline.playerControls = false;
+        }
+
+        trace('[OnlinePlayModule] Strumlines configuradas. Player1: ${isPlayer1}');
+    }
+
+    /**
+     * Criar elementos de UI do modo online
+     */
+    function createOnlineUI():Void
+    {
+        var playState = PlayState.instance;
+
+        // Score do oponente
+        opponentScoreText = new FlxText(10, 120, 400);
+        opponentScoreText.setFormat(Paths.font("vcr.ttf"), 18, FlxColor.WHITE, LEFT, OUTLINE, FlxColor.BLACK);
+        opponentScoreText.text = "Opponent: 0";
+        opponentScoreText.scrollFactor.set(0, 0);
+        playState.add(opponentScoreText);
+        uiElements.push(opponentScoreText);
+
+        // Health do oponente
+        opponentHealthText = new FlxText(10, 145, 400);
+        opponentHealthText.setFormat(Paths.font("vcr.ttf"), 16, FlxColor.WHITE, LEFT, OUTLINE, FlxColor.BLACK);
+        opponentHealthText.text = "HP: 100%";
+        opponentHealthText.scrollFactor.set(0, 0);
+        playState.add(opponentHealthText);
+        uiElements.push(opponentHealthText);
+
+        // Status de conexão
+        connectionText = new FlxText(FlxG.width - 210, 10, 200);
+        connectionText.setFormat(Paths.font("vcr.ttf"), 16, FlxColor.LIME, RIGHT, OUTLINE, FlxColor.BLACK);
+        connectionText.text = isConnected ? "● ONLINE" : "● OFFLINE";
+        connectionText.scrollFactor.set(0, 0);
+        playState.add(connectionText);
+        uiElements.push(connectionText);
+
+        // Ping
+        pingText = new FlxText(FlxG.width - 210, 35, 200);
+        pingText.setFormat(Paths.font("vcr.ttf"), 14, FlxColor.YELLOW, RIGHT, OUTLINE, FlxColor.BLACK);
+        pingText.text = "Ping: --ms";
+        pingText.scrollFactor.set(0, 0);
+        playState.add(pingText);
+        uiElements.push(pingText);
+
+        trace("[OnlinePlayModule] UI criada!");
+    }
+
+    /**
+     * Configurar callbacks de rede
+     */
+    function setupNetworkCallbacks():Void
+    {
+        // Configure seus callbacks de networking aqui
+
+        /*
+        onlineManager.onOpponentInput = function(data:Dynamic) {
+            handleOpponentInput(data);
+        };
+
+        onlineManager.onOpponentNoteHit = function(data:Dynamic) {
+            handleOpponentNoteHit(data);
+        };
+
+        onlineManager.onOpponentNoteMiss = function(data:Dynamic) {
+            handleOpponentNoteMiss(data);
+        };
+
+        onlineManager.onScoreUpdate = function(data:Dynamic) {
+            opponentScore = data.score;
+            opponentCombo = data.combo;
+            opponentHealth = data.health;
+        };
+
+        onlineManager.onOpponentDied = function() {
+            opponentDied = true;
+            endGameWithWin();
+        };
+
+        onlineManager.onDisconnect = function() {
+            handleDisconnect();
+        };
+        */
+
+        trace("[OnlinePlayModule] Callbacks de rede configurados!");
+    }
+
+    // ==========================================
+    // INPUT & SINCRONIZAÇÃO
+    // ==========================================
+
+    /**
+     * Capturar e enviar inputs do jogador
+     */
+    function captureInputs():Void
+    {
+        var controls = PlayState.instance.controls;
+
+        var directions:Array<Bool> = [
+            controls.NOTE_LEFT,
+            controls.NOTE_DOWN,
+            controls.NOTE_UP,
+            controls.NOTE_RIGHT
+        ];
+
+        for (i in 0...4)
+        {
+            if (directions[i].justPressed)
+            {
+                sendInput(i, true);
+            }
+            if (directions[i].justReleased)
+            {
+                sendInput(i, false);
+            }
+        }
+    }
+
+    /**
+     * Verificar se o jogador morreu
+     */
+    function checkDeath():Void
+    {
+        var health:Float = PlayState.instance.health;
+
+        if (health <= 0 && !myDied)
+        {
+            myDied = true;
+            sendPlayerDied();
+            trace("[OnlinePlayModule] Jogador morreu!");
+        }
+    }
+
+    /**
+     * Atualizar elementos de UI
+     */
+    function updateUI():Void
+    {
+        if (opponentScoreText != null)
+        {
+            opponentScoreText.text = 'Opponent: ${opponentScore} (${opponentCombo}x)';
+        }
+
+        if (opponentHealthText != null)
+        {
+            var hpPercent:Int = Math.floor(opponentHealth * 100);
+            opponentHealthText.text = 'HP: ${hpPercent}%';
+
+            // Mudar cor baseado na vida
+            if (hpPercent > 60)
+                opponentHealthText.color = FlxColor.LIME;
+            else if (hpPercent > 30)
+                opponentHealthText.color = FlxColor.YELLOW;
+            else
+                opponentHealthText.color = FlxColor.RED;
+        }
+
+        // Atualizar ping (exemplo)
+        // if (pingText != null && onlineManager != null)
+        // {
+        //     pingText.text = 'Ping: ${onlineManager.getPing()}ms';
+        // }
+    }
+
+    // ==========================================
+    // FUNÇÕES DE REDE (STUBS)
+    // ==========================================
+
+    function sendInput(direction:Int, pressed:Bool):Void
+    {
+        // onlineManager.sendInput(direction, pressed);
+        // trace('[OnlinePlayModule] Input: dir=${direction} pressed=${pressed}');
+    }
+
+    function sendNoteHit(data:Dynamic):Void
+    {
+        // onlineManager.sendNoteHit(data);
+        trace('[OnlinePlayModule] Note Hit: dir=${data.direction} judgement=${data.judgement}');
+    }
+
+    function sendNoteMiss(data:Dynamic):Void
+    {
+        // onlineManager.sendNoteMiss(data);
+        trace('[OnlinePlayModule] Note Miss: dir=${data.direction}');
+    }
+
+    function sendSyncData():Void
+    {
+        var playState = PlayState.instance;
+
+        var syncData:Dynamic = {
+            score: playState.songScore,
+            health: playState.health,
+            combo: playState.combo,
+            misses: playState.songMisses,
+            time: Conductor.instance.songPosition
+        };
+
+        // onlineManager.sendSync(syncData);
+    }
+
+    function sendPlayerDied():Void
+    {
+        // onlineManager.sendPlayerDied();
+        trace('[OnlinePlayModule] Enviando morte do jogador...');
+    }
+
+    function sendGameResult(data:Dynamic):Void
+    {
+        // onlineManager.sendGameResult(data);
+        trace('[OnlinePlayModule] Resultado: ${data.won ? "VITÓRIA" : "DERROTA"}');
+    }
+
+    // ==========================================
+    // HANDLERS DE EVENTOS DO OPONENTE
+    // ==========================================
+
+    function handleOpponentInput(data:Dynamic):Void
+    {
+        var dir:Int = data.direction;
+        var pressed:Bool = data.pressed;
+
+        if (theirStrumline == null) return;
+
+        var receptor = theirStrumline.getByIndex(dir);
+        if (receptor == null) return;
+
+        if (pressed)
+        {
+            receptor.playPress();
+        }
+        else
+        {
+            receptor.playStatic();
+        }
+    }
+
+    function handleOpponentNoteHit(data:Dynamic):Void
+    {
+        var dir:Int = data.direction;
+        var judgement:String = data.judgement;
+
+        // Tocar animação do personagem oponente
+        var character:BaseCharacter = isPlayer1 ? PlayState.instance.dad : PlayState.instance.boyfriend;
+        if (character != null)
+        {
+            character.playSingAnimation(dir, false);
+        }
+
+        // Confirmar nota na strumline
+        if (theirStrumline != null)
+        {
+            var receptor = theirStrumline.getByIndex(dir);
+            if (receptor != null)
+            {
+                receptor.playConfirm();
+            }
+
+            // Splash de nota se for "sick"
+            if (judgement == "sick")
+            {
+                theirStrumline.playNoteSplash(dir);
+            }
+        }
+
+        // Atualizar dados
+        opponentScore = data.score;
+        opponentCombo = data.combo;
+        opponentHealth = data.health;
+    }
+
+    function handleOpponentNoteMiss(data:Dynamic):Void
+    {
+        var dir:Int = data.direction;
+
+        // Tocar animação de miss
+        var character:BaseCharacter = isPlayer1 ? PlayState.instance.dad : PlayState.instance.boyfriend;
+        if (character != null)
+        {
+            character.playSingAnimation(dir, true);
+        }
+
+        // Atualizar health
+        opponentHealth = data.health;
+    }
+
+    function handleDisconnect():Void
+    {
+        isConnected = false;
+
+        if (connectionText != null)
+        {
+            connectionText.text = "● DISCONNECTED!";
+            connectionText.color = FlxColor.RED;
+        }
+
+        trace("[OnlinePlayModule] Oponente desconectou!");
+
+        // Encerrar partida com vitória automática
+        if (inOnlineMatch)
+        {
+            endGameWithWin();
+        }
+    }
+
+    // ==========================================
+    // FINALIZAÇÃO DA PARTIDA
+    // ==========================================
+
+    function endGameWithWin():Void
+    {
+        trace("[OnlinePlayModule] Vitória automática!");
+
+        // Pausar música
+        if (FlxG.sound.music != null)
+        {
+            FlxG.sound.music.pause();
+        }
+
+        showResultScreen(true);
+
+        // Voltar ao menu após 3 segundos
+        new FlxTimer().start(3.0, function(timer:FlxTimer) {
+            FlxG.switchState(new funkin.ui.mainmenu.MainMenuState());
+        });
+    }
+
+    function showResultScreen(won:Bool):Void
+    {
+        var playState = PlayState.instance;
+
+        var resultText:FlxText = new FlxText(0, 200, FlxG.width);
+        resultText.setFormat(Paths.font("vcr.ttf"), 48, FlxColor.WHITE, CENTER, OUTLINE, FlxColor.BLACK);
+        resultText.text = won ? "YOU WIN!" : "YOU LOSE!";
+        resultText.scrollFactor.set(0, 0);
+        playState.add(resultText);
+
+        var scoreText:FlxText = new FlxText(0, 280, FlxG.width);
+        scoreText.setFormat(Paths.font("vcr.ttf"), 24, FlxColor.WHITE, CENTER, OUTLINE, FlxColor.BLACK);
+        scoreText.text = 'Your Score: ${PlayState.instance.songScore}\nOpponent: ${opponentScore}';
+        scoreText.scrollFactor.set(0, 0);
+        playState.add(scoreText);
+
+        trace('[OnlinePlayModule] Tela de resultado exibida: ${won ? "VITÓRIA" : "DERROTA"}');
+    }
+}
